@@ -1,5 +1,6 @@
 using System.Collections.Generic;
-using Unity.Mathematics;
+using System.Linq;
+using JetBrains.Annotations;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Tilemaps;
@@ -7,21 +8,40 @@ using UnityEngine.Tilemaps;
 public class GridBuildingService : MonoBehaviour
 {
     public static GridBuildingService Instance;
-    
-    private static Dictionary<TileType, TileBase> _tileBases = new ();
 
     [SerializeField] private GridLayout _gridLayout;
     [SerializeField] private Tilemap _mainTilemap;
     [SerializeField] private Tilemap _tempTilemap;
+    [SerializeField] private string _tilePath = @"Tiles\MarkupTiles\";
 
-    [SerializeField] private string _tilePath = @"Tiles\";
+    private readonly Dictionary<TileType, TileBase> _tileBases = new();
 
-    private Tower _temp;
-    private Vector3 _prevPosition;
+    private Building _currentBuilding;
+    private Vector3 _previousPosition;
+    private BoundsInt _previousArea;
 
-    public void Initialize(Tower tower)
+    [UsedImplicitly]
+    public void Initialize(Building building)
     {
-        _temp = Instantiate(tower, Vector3.zero, quaternion.identity).GetComponent<Tower>();
+        _currentBuilding = Instantiate(building, Vector3.zero, Quaternion.identity);
+        FollowBuilding();
+    }
+    
+    public Vector3Int GetCellPosition(Vector3 objectPosition)
+    {
+        return _gridLayout.LocalToCell(objectPosition);
+    }
+    
+    public bool CanTakeArea(BoundsInt area)
+    {
+        var baseArray = GetTilesBlock(area, _tempTilemap);
+        return baseArray.All(tiles => tiles == _tileBases[TileType.White]);
+    }
+    
+    public void TakeArea(BoundsInt area)
+    {
+        SetTilesBlock(area, TileType.Green, _mainTilemap);
+        SetTilesBlock(area, TileType.Red, _tempTilemap);
     }
     
     private void Awake()
@@ -30,9 +50,8 @@ public class GridBuildingService : MonoBehaviour
         {
             Destroy(this);
         }
-
+        
         Instance = this;
-        DontDestroyOnLoad(this);
     }
 
     private void Start()
@@ -43,9 +62,40 @@ public class GridBuildingService : MonoBehaviour
         _tileBases.Add(TileType.Red, Resources.Load<TileBase>(_tilePath + "red"));
     }
 
+    private TileBase[] GetTilesBlock(BoundsInt area, Tilemap tilemap)
+    {
+        var tiles = new TileBase[GetAreaSize(area)];
+        var counter = 0;
+        
+        foreach (var v in area.allPositionsWithin)
+        {
+            var position = new Vector3Int(v.x, v.y, 0);
+            tiles[counter] = tilemap.GetTile(position);
+            counter++;
+        }
+
+        return tiles;
+    }
+
+    private void SetTilesBlock(BoundsInt area, TileType type, Tilemap tilemap)
+    {
+        var size = GetAreaSize(area);
+        var tiles = new TileBase[size];
+        FillTiles(tiles, type);
+        tilemap.SetTilesBlock(area, tiles);
+    }
+
+    private void FillTiles(TileBase[] tiles, TileType type)
+    {
+        for (var i = 0; i < tiles.Length; i++)
+        {
+            tiles[i] = _tileBases[type];
+        }
+    }
+
     private void Update()
     {
-        if (!_temp)
+        if (!_currentBuilding)
         {
             return;
         }
@@ -57,49 +107,67 @@ public class GridBuildingService : MonoBehaviour
                 return;
             }
 
-            if (!_temp.Placed)
+            if (!_currentBuilding.Placed)
             {
                 var touchPosition = Camera.main.ScreenToWorldPoint(Input.mousePosition);
                 var cellPosition = _gridLayout.LocalToCell(touchPosition);
 
-                if (_prevPosition != cellPosition)
+                if (_previousPosition != cellPosition)
                 {
-                    _temp.transform.localPosition = _gridLayout.CellToLocalInterpolated(cellPosition
+                    _currentBuilding.transform.localPosition = _gridLayout.CellToLocalInterpolated(cellPosition
                         + new Vector3(.5f, .5f, 0f));
-                    _prevPosition = cellPosition;
+                    _previousPosition = cellPosition;
+                    FollowBuilding();
                 }
             }
         }
-    }
-
-    private TileBase[] GetTilesBlock(BoundsInt area, Tilemap tilemap)
-    {
-        var tiles = new TileBase[GetAreaSize(area)];
-        var count = 0;
-
-        foreach (var vector in area.allPositionsWithin)
+        
+        else if (Input.GetKeyDown(KeyCode.Space))
         {
-            var position = new Vector3Int(vector.x, vector.y, 0);
-            tiles[count] = tilemap.GetTile(position);
-            count++;
+            if (_currentBuilding.CanBePlaced())
+            {
+                _currentBuilding.Place();
+            }
         }
-
-        return tiles;
-    }
-
-    private void SetTilesBlock(BoundsInt area, TileType type, Tilemap tilemap)
-    {
-        var size = GetAreaSize(area);
-        var tiles = new TileBase[size];
-        FillTiles(tiles, type);
-    }
-
-    private void FillTiles(TileBase[] tiles, TileType type)
-    {
-        for (var i = 0; i < tiles.Length; i++)
+        
+        else if (Input.GetKeyDown(KeyCode.Escape))
         {
-            tiles[i] = _tileBases[type];
+            ClearArea();
+            Destroy(_currentBuilding.gameObject);
         }
+    }
+
+    private void ClearArea()
+    {
+        var toClear = new TileBase[GetAreaSize(_previousArea)];
+        FillTiles(toClear, TileType.Empty);
+        _tempTilemap.SetTilesBlock(_previousArea, toClear);
+    }
+
+    private void FollowBuilding()
+    {
+        ClearArea();
+
+        _currentBuilding.area.position = _gridLayout.WorldToCell(_currentBuilding.gameObject.transform.position);
+        var buildingArea = _currentBuilding.area;
+        var tileBases = GetTilesBlock(buildingArea, _tempTilemap);
+        var tiles = new TileBase[tileBases.Length];
+        
+        for (var i = 0; i < tileBases.Length; i++)
+        {
+            if (tileBases[i] == _tileBases[TileType.White])
+            {
+                tiles[i] = _tileBases[TileType.Green];
+            }
+            else
+            {
+                FillTiles(tiles, TileType.Red);
+                break;
+            }
+        }
+        
+        _tempTilemap.SetTilesBlock(buildingArea, tiles);
+        _previousArea = buildingArea;
     }
 
     private int GetAreaSize(BoundsInt area)
