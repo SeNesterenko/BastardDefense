@@ -8,7 +8,7 @@ using UnityEngine.Tilemaps;
 public class GridBuildingService : MonoBehaviour
 {
     public static GridBuildingService Instance;
-
+    
     [SerializeField] private GridLayout _gridLayout;
     [SerializeField] private Tilemap _mainTilemap;
     [SerializeField] private Tilemap _tempTilemap;
@@ -148,8 +148,8 @@ public class GridBuildingService : MonoBehaviour
     {
         ClearArea();
 
-        _currentBuilding.area.position = _gridLayout.WorldToCell(_currentBuilding.gameObject.transform.position);
-        var buildingArea = _currentBuilding.area;
+        _currentBuilding.ChangeAreaPosition(_gridLayout.WorldToCell(_currentBuilding.gameObject.transform.position));
+        var buildingArea = _currentBuilding.Area;
         var tileBases = GetTilesBlock(buildingArea, _tempTilemap);
         var tiles = new TileBase[tileBases.Length];
         
